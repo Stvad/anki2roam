@@ -1,26 +1,24 @@
-import sys, os, codecs, re, shutil
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+import arrow
+from functional import seq
+
 sys.path.append("../anki/pylib")
 from anki.storage import Collection
+from anki import template
 import anki
 
-# From https://www.juliensobczak.com/write/2016/12/26/anki-scripting.html#CaseStudy:ExportingflashcardsinHTML
-# Constants
+# Initial version is taken from
+# https://www.juliensobczak.com/write/2016/12/26/anki-scripting.html#CaseStudy:ExportingflashcardsinHTML
 PROFILE_HOME = "/Users/sitalov/Library/Application Support/Anki2/Stvad"
 OUTPUT_DIRECTORY = "/tmp/algothml"
 
-# Utility methods
 
-def rawText(text):
-    """ Clean question text to display a list of all questions. """
-    raw_text = re.sub('<[^<]+?>', '', text)
-    raw_text = re.sub('"', "'", raw_text)
-    raw_text = raw_text.strip()
-    if raw_text:
-        return raw_text
-    else:
-        return "Untitled"
-
-def extractMedia(text):
+def extract_media(text):
     regex = r'<img src="(.*?)"\s?/?>'
     pattern = re.compile(regex)
 
@@ -40,6 +38,7 @@ def extractMedia(text):
 
     return text_with_prefix_folder
 
+
 def get_card_ids(deck_manager, did, children=False, include_from_dynamic=False):
     deck_ids = [did] + ([deck_id for _, deck_id in deck_manager.children(did)] if children else [])
 
@@ -50,50 +49,7 @@ def get_card_ids(deck_manager, did, children=False, include_from_dynamic=False):
     return deck_manager.col.db.list(request.format(*parameters))
 
 
-# Load the anki collection
-cpath = os.path.join(PROFILE_HOME, "collection.anki2")
-col = Collection(cpath, log=True)
-
-# Iterate over all cards
-cards = {}
-# card_ids = get_card_ids(col.decks, col.decks.id("Book Highlights::Bargaining for Advantage"))
-card_ids = get_card_ids(col.decks, col.decks.id("Book Highlights::Algorithms to Live By"))
-print(card_ids)
-for cid in get_card_ids(col.decks, col.decks.id("Book Highlights::Algorithms to Live By")):
-    # for cid in col.findCards("deck:\"Book Highlights::Algorithms to Live By\""):
-    # for note_id in col.decks.get_note_ids()
-
-    card = col.getCard(cid)
-
-    # Retrieve the node to determine the card type model
-    note = col.getNote(card.nid)
-    model = col.models.get(note.mid)
-    tags = note.tags
-
-    # Card contains the index of the template to use
-    print(model['tmpls'])
-    print(card.ord)
-    # template = model['tmpls'][card.ord]
-    #tdodo 0 only if cloze
-    template = model['tmpls'][0]
-
-    # We retrieve the question and answer templates
-    question_template = template['qfmt']
-    answer_template = template['afmt']
-
-    # We could use a convenient method exposed by Anki to evaluate the template
-    rendering = col.renderQA([cid], "card")[0]
-    # Only one element when coming from a given card
-    # Could be more when passing a note of type "Basic (with reversed card)"
-
-    question = rendering['q']
-    answer = rendering['a']
-
-    question = extractMedia(question)
-    answer = extractMedia(answer)
-
-    css = model['css']
-
+def get_card_html(css, answer, card, col):
     html = f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -105,143 +61,89 @@ for cid in get_card_ids(col.decks, col.decks.id("Book Highlights::Algorithms to 
 </head>
 <body>
   <div class="card">
-  {answer}
-  [[[[interval]]::{card.ivl}]] [[[[ease]]::{card.factor/1000}]] [{card.due}]
+  {answer} 
+    [[[[interval]]::{card.ivl}]] [[[[factor]]::{card.factor / 1000}]] {roam_date(get_card_date(card, col.crt))}
   </div>
 </body>
 </html>"""
-    #todo
-    # also need next scheduled review
-    # todo filter out suspended
-
-    card_filename = f"card-{cid}.html"
-    card_file = codecs.open(os.path.join(OUTPUT_DIRECTORY, card_filename), "w", "utf-8")
-    card_file.write(html)
-    card_file.close()
-
-    cards[cid] = {
-        'name': rawText(question),
-        'file': card_filename,
-        'tags': tags
-    }
+    return html
 
 
-# Generate a list of all cards
-card_list = '['
-for cid, props in cards.items():
-    card_list += "{{ 'name': \"{}\", 'file': '{}', 'tags': [ {} ] }},\n".format(props['name'],
-                                                                                props['file'],
-                                                                                "\"{0}\"".format("\",\"".join(
-                                                                                    props['tags'])))
-card_list += ']'
+def get_card_date(card, base_timestamp):
+    """
+     -- Due is used differently for different card types:
+     --   new: note id or random int
+     --   due: integer day, relative to the collection's creation time
+     --   learning: integer timestamp
 
-html = """<!doctype html>
-<html lang="fr" ng-app="ankiApp">
-<head>
-  <meta charset="utf-8">
-  <title>Anki Export</title>
-  <script src="//ajax.googleapis.com/ajax/libs/angularjs/1.5.7/angular.min.js">
-  </script>
-  <style>
-body {
-    background-color: #0079bf;
-}
-#search {
-    position: fixed;
-    height: 70px;
-    width: 100%%;
-    padding-top: 20px;
-    text-align: center;
-}
-#search input {
-    width: 80%%;
-    height: 30px;
-    border-radius: 15px;
-    text-align: center;
-    border: none;
-    box-shadow: 2px 2px #222;
-}
-#list {
-    position: fixed;
-    width: 50%%;
-    top: 70px;
-    bottom: 0;
-    left: 0;
-}
-#list ul {
-    list-style-type: none;
-}
-#list li {
-    background-color: white;
-    border: 1px solid silver;
-    border-radius: 2px;
-    width: 90%%;
-    padding: 5px 10px;
-    margin-top: 10px;
-    margin-bottom: 10px;
-    cursor: pointer;
-}
-#card {
-    position: fixed;
-    width: 50%%;
-    right: 0;
-    top: 85px;
-    bottom: 0;
-}
-iframe {
-    background-color: white;
-    border: none;
-    box-shadow: 5px 5px 3px #333;
-}
-.tag {
-    float: right;
-    margin-right: 10px;
-    padding: 2px 5px;
-    background-color: orangered;
-    color: white;
-    font-size: 12px;
-    font-family: Arial;
-}
-  </style>
-  <script>
-angular.module('ankiApp', [])
-  .controller('AnkiController', function() {
-    var anki = this;
-    anki.cardList = %s;
-    anki.selectedCard = anki.cardList[0];
+     type            integer not null,
+      -- 0=new, 1=learning, 2=due, 3=filtered
 
-    anki.select = function(card) {
-      anki.selectedCard = card;
-    }
-  });
-  </script>
-</head>
-<body>
-  <div ng-controller="AnkiController as anki">
-      <div id="search">
-        <input type="text" ng-model="anki.search" placeholder="Search...">
-      </div>
-      <nav id="list">
-        <ul>
-          <li ng-repeat="card in anki.cardList | filter:anki.search \
-                                               | orderBy:'name'""
-              ng-click="anki.select(card)">
-            {{card.name}}
-            <span class="tag" ng-repeat="tag in card.tags">{{tag}}</span>
-          </li>
-        </ul>
-      </nav>
-      <div id="card">
-        <iframe ng-src="{{anki.selectedCard.file}}" width="80%%">
-        </iframe>
-      </div>
-  </div>
-</body>
-</html>""" % card_list
+      queue           integer not null,
+      -- -3=user buried(In scheduler 2),
+      -- -2=sched buried (In scheduler 2),
+      -- -2=buried(In scheduler 1),
+      -- -1=suspended,
+      -- 0=new, 1=learning, 2=due (as for type)
+      -- 3=in learning, next rev in at least a day after the previous review
+
+     Need to take into account dates in the past, (probably should map to today)
+     Also suspended cards?
+    """
+    now = arrow.now()
+    if card.type == 0:
+        return None
+    elif card.type == 1:
+        return now
+    else:
+        # Todo handle in the past
+        due_date = arrow.get(base_timestamp).shift(days=card.due)
+        return max(due_date, now)
 
 
-index_filename = "index.html"
-index_file = codecs.open(os.path.join(OUTPUT_DIRECTORY, index_filename), \
-                         "w", "utf-8")
-index_file.write(html)
-index_file.close()
+def roam_date(date):
+    return f"[[{date.format('MMMM Do, YYYY')}]]"
+
+
+def export_cards(deck_name="Book Highlights::Algorithms to Live By"):
+    col = load_collection()
+
+    for card in get_cards(col, deck_name):
+        note = col.getNote(card.nid)
+        tags = note.tags  # todo
+
+        rendering = template.render_card(col, card, note, False)
+
+        # question = rendering['q']
+        # answer = rendering['a']
+        answer = rendering.answer_text
+
+        # question = extractMedia(question)
+        answer = extract_media(answer)
+
+        css = col.models.get(note.mid)['css']
+
+        html = get_card_html(css, answer, card, col)
+
+        card_filename = f"card-{card.id}.html"
+        Path(OUTPUT_DIRECTORY).joinpath(card_filename).write_text(html)
+
+
+def load_collection():
+    collection_path = os.path.join(PROFILE_HOME, "collection.anki2")
+    return Collection(collection_path, log=True)
+
+
+def get_cards(col, deck_name):
+    return seq(get_card_ids(col.decks, col.decks.id(deck_name))) \
+        .map(col.getCard) \
+        .filter(is_not_suspended) \
+        .to_list()
+
+
+def is_not_suspended(card):
+    return card.queue != -1
+
+
+if __name__ == '__main__':
+    export_cards()
