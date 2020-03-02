@@ -1,8 +1,10 @@
+import argparse
 import os
 import re
 import shutil
 import sys
 from pathlib import Path
+from typing import List
 
 import arrow
 from functional import seq
@@ -12,18 +14,17 @@ from anki.storage import Collection
 from anki import template
 import anki
 
+
 # Initial version is taken from
 # https://www.juliensobczak.com/write/2016/12/26/anki-scripting.html#CaseStudy:ExportingflashcardsinHTML
-PROFILE_HOME = "/Users/sitalov/Library/Application Support/Anki2/Stvad"
-OUTPUT_DIRECTORY = "/tmp/algothml"
 
 
-def extract_media(text):
+def extract_media(text, output_dir, profile_dir):
     regex = r'<img src="(.*?)"\s?/?>'
     pattern = re.compile(regex)
 
-    src_media_folder = os.path.join(PROFILE_HOME, "collection.media/")
-    dest_media_folder = os.path.join(OUTPUT_DIRECTORY, "medias")
+    src_media_folder = os.path.join(profile_dir, "collection.media/")
+    dest_media_folder = os.path.join(output_dir, "medias")
 
     # Create target directory if not exists
     if not os.path.exists(dest_media_folder):
@@ -49,24 +50,34 @@ def get_card_ids(deck_manager, did, children=False, include_from_dynamic=False):
     return deck_manager.col.db.list(request.format(*parameters))
 
 
-def get_card_html(css, answer, card, col):
-    html = f"""<!doctype html>
+# todo cloze needs work too, I imagine I can translate it to the syntax used in the anki import plugin
+def js():
+    return """function addBrackets() {
+    const elements = document.getElementsByClassName("cloze")
+    for (element of elements) {
+        element.innerHTML = `{${element.innerHTML}}`
+    }
+}
+    """
+
+
+def get_aggregate_html(css: List[str], cards: List[str], deck_name: str = ""):
+    css_str = '\n'.join(set(css))
+    cards_str = '\n'.join(cards)
+
+    return f"""<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Card Answer</title>
+  <title>{deck_name}</title>
   <style>
-  {css}
+  {css_str}
   </style>
+  <script>{js()}</script> 
 </head>
-<body>
-  <div class="card">
-  {answer} 
-    [[[[interval]]::{card.ivl}]] [[[[factor]]::{card.factor / 1000}]] {roam_date(get_card_date(card, col.crt))}
-  </div>
-</body>
+<body onload="addBrackets();">
+  {cards_str} </body>
 </html>"""
-    return html
 
 
 def get_card_date(card, base_timestamp):
@@ -79,16 +90,7 @@ def get_card_date(card, base_timestamp):
      type            integer not null,
       -- 0=new, 1=learning, 2=due, 3=filtered
 
-      queue           integer not null,
-      -- -3=user buried(In scheduler 2),
-      -- -2=sched buried (In scheduler 2),
-      -- -2=buried(In scheduler 1),
-      -- -1=suspended,
-      -- 0=new, 1=learning, 2=due (as for type)
-      -- 3=in learning, next rev in at least a day after the previous review
-
      Need to take into account dates in the past, (probably should map to today)
-     Also suspended cards?
     """
     now = arrow.now()
     if card.type == 0:
@@ -96,7 +98,6 @@ def get_card_date(card, base_timestamp):
     elif card.type == 1:
         return now
     else:
-        # Todo handle in the past
         due_date = arrow.get(base_timestamp).shift(days=card.due)
         return max(due_date, now)
 
@@ -105,33 +106,53 @@ def roam_date(date):
     return f"[[{date.format('MMMM Do, YYYY')}]]"
 
 
-def export_cards(deck_name="Book Highlights::Algorithms to Live By"):
-    col = load_collection()
-
-    for card in get_cards(col, deck_name):
-        note = col.getNote(card.nid)
-        tags = note.tags  # todo
-
-        rendering = template.render_card(col, card, note, False)
-
-        # question = rendering['q']
-        # answer = rendering['a']
-        answer = rendering.answer_text
-
-        # question = extractMedia(question)
-        answer = extract_media(answer)
-
-        css = col.models.get(note.mid)['css']
-
-        html = get_card_html(css, answer, card, col)
-
-        card_filename = f"card-{card.id}.html"
-        Path(OUTPUT_DIRECTORY).joinpath(card_filename).write_text(html)
+def format_tags(tags):
+    return seq(tags).map(lambda t: f'[[{t}]]').make_string(" ")
 
 
-def load_collection():
-    collection_path = os.path.join(PROFILE_HOME, "collection.anki2")
-    return Collection(collection_path, log=True)
+def insert_metadata(answer: str, metadata):
+    for match in re.finditer("</\\w+>", answer):
+        pass
+
+    if match:
+        return answer[:match.start()] + metadata + answer[match.start():]
+    return answer + match
+
+
+class HtmlExporter:
+    def __init__(self, deck_name: str, profile_directory: str):
+        self.deck_name = deck_name
+        self.profile_directory = profile_directory
+        self.collection = self.load_collection()
+        self.css_fragments = ["div {display: inline;}"]
+        self.card_fragments = []
+
+    def export(self, output_dir):
+        for card in get_cards(self.collection, self.deck_name):
+            note = self.collection.getNote(card.nid)
+            self.css_fragments.append(self.collection.models.get(note.mid)['css'])
+
+            rendering = template.render_card(self.collection, card, note, False)
+
+            answer = extract_media(rendering.answer_text, output_dir, self.profile_directory)
+            self.card_fragments.append(self.get_card_fragment(answer, card, note.tags))
+
+        print(f"Exporting {len(self.card_fragments)} cards")
+
+        Path(output_dir).joinpath(self.deck_name).with_suffix('.html') \
+            .write_text(get_aggregate_html(self.css_fragments, self.card_fragments, self.deck_name))
+
+    # todo the extra info ending up in a separate block is a big problem -_-
+    # also image export does not really work - it embeds the link and not copies the image
+    def get_card_fragment(self, answer, card, tags):
+        date = roam_date(get_card_date(card, self.collection.crt))
+        metadata = format_tags(tags) + f" [[[[interval]]::{card.ivl}]] [[[[factor]]::{card.factor / 1000}]] {date}"
+
+        return f"""<div class="card"> {insert_metadata(answer, metadata)} </div>"""
+
+    def load_collection(self):
+        collection_path = os.path.join(self.profile_directory, "collection.anki2")
+        return Collection(collection_path, log=True, lock=False)
 
 
 def get_cards(col, deck_name):
@@ -146,4 +167,11 @@ def is_not_suspended(card):
 
 
 if __name__ == '__main__':
-    export_cards()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('deck_name', help='Deck Name')
+    parser.add_argument('profile_directory', help='The Anki profile directory')
+    parser.add_argument('-o', '--output', help='Deck Name', default=Path(__file__).parent.resolve())
+    args = parser.parse_args()
+    print(args)
+
+    HtmlExporter("Book Highlights::Algorithms to Live By", args.profile_directory).export(args.output)
