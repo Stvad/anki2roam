@@ -61,25 +61,6 @@ def js():
     """
 
 
-def get_aggregate_html(css: List[str], cards: List[str], deck_name: str = ""):
-    css_str = '\n'.join(set(css))
-    cards_str = '\n'.join(cards)
-
-    return f"""<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <title>{deck_name}</title>
-  <style>
-  {css_str}
-  </style>
-  <script>{js()}</script> 
-</head>
-<body onload="addBrackets();">
-  {cards_str} </body>
-</html>"""
-
-
 def get_card_date(card, base_timestamp):
     """
      -- Due is used differently for different card types:
@@ -111,7 +92,7 @@ def format_tags(tags):
 
 
 def insert_metadata(answer: str, metadata):
-    for match in re.finditer("</\\w+>", answer):
+    for match in re.finditer("</\\w+?>", answer):
         pass
 
     if match:
@@ -145,14 +126,38 @@ class HtmlExporter:
     # todo the extra info ending up in a separate block is a big problem -_-
     # also image export does not really work - it embeds the link and not copies the image
     def get_card_fragment(self, answer, card, tags):
-        date = roam_date(get_card_date(card, self.collection.crt))
-        metadata = format_tags(tags) + f" [[[[interval]]::{card.ivl}]] [[[[factor]]::{card.factor / 1000}]] {date}"
+        metadata = self.get_card_metadata(card, tags)
 
         return f"""<div class="card"> {insert_metadata(answer, metadata)} </div>"""
+
+    def get_card_metadata(self, card, tags):
+        date = roam_date(get_card_date(card, self.collection.crt))
+        metadata = [format_tags(tags), f"[[[[interval]]::{card.ivl}]]", f"[[[[factor]]::{card.factor / 1000}]]", date]
+        metadata = f"<span>{' '.join(metadata)}</span>"
+        return metadata
 
     def load_collection(self):
         collection_path = os.path.join(self.profile_directory, "collection.anki2")
         return Collection(collection_path, log=True, lock=False)
+
+
+def get_aggregate_html(css: List[str], cards: List[str], deck_name: str = ""):
+    css_str = '\n'.join(set(css))
+    cards_str = '\n'.join(cards)
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{deck_name}</title>
+  <style>
+  {css_str}
+  </style>
+  <script>{js()}</script> 
+</head>
+<body onload="addBrackets();">
+  {cards_str} </body>
+</html>"""
 
 
 def get_cards(col, deck_name):
