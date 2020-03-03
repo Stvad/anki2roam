@@ -3,15 +3,18 @@ import os
 import re
 import shutil
 import sys
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List
 
 import arrow
 from functional import seq
+from markdownify import markdownify as md
+
+from anki.cards import Card, MODEL_CLOZE
+from anki.notes import Note
 
 sys.path.append("../anki/pylib")
-from anki.storage import Collection
-from anki import template
+from anki import template, Collection
 import anki
 
 
@@ -100,10 +103,11 @@ def insert_metadata(answer: str, metadata):
     return answer + match
 
 
-class HtmlExporter:
-    def __init__(self, deck_name: str, profile_directory: str):
+class Exporter(ABC):
+    def __init__(self, deck_name: str, profile_directory: str, file_suffix: str = ".html"):
         self.deck_name = deck_name
         self.profile_directory = profile_directory
+        self.file_suffix = file_suffix
         self.collection = self.load_collection()
         self.css_fragments = ["div {display: inline;}"]
         self.card_fragments = []
@@ -116,48 +120,80 @@ class HtmlExporter:
             rendering = template.render_card(self.collection, card, note, False)
 
             answer = extract_media(rendering.answer_text, output_dir, self.profile_directory)
-            self.card_fragments.append(self.get_card_fragment(answer, card, note.tags))
+            self.card_fragments.append(self.get_card_fragment(answer, card, note))
 
         print(f"Exporting {len(self.card_fragments)} cards")
 
-        Path(output_dir).joinpath(self.deck_name).with_suffix('.html') \
-            .write_text(get_aggregate_html(self.css_fragments, self.card_fragments, self.deck_name))
+        Path(output_dir).joinpath(self.deck_name).with_suffix(self.file_suffix) \
+            .write_text(self.get_aggregate())
 
-    # todo the extra info ending up in a separate block is a big problem -_-
-    # also image export does not really work - it embeds the link and not copies the image
-    def get_card_fragment(self, answer, card, tags):
-        metadata = self.get_card_metadata(card, tags)
-
-        return f"""<div class="card"> {insert_metadata(answer, metadata)} </div>"""
-
-    def get_card_metadata(self, card, tags):
+    def get_card_metadata(self, card, note):
         date = roam_date(get_card_date(card, self.collection.crt))
-        metadata = [format_tags(tags), f"[[[[interval]]::{card.ivl}]]", f"[[[[factor]]::{card.factor / 1000}]]", date]
-        metadata = f"<span>{' '.join(metadata)}</span>"
+        metadata = [f"[[[[interval]]::{card.ivl}]]", f"[[[[factor]]::{card.factor / 1000}]]",
+                    date, format_tags(note.tags)]
         return metadata
 
     def load_collection(self):
         collection_path = os.path.join(self.profile_directory, "collection.anki2")
         return Collection(collection_path, log=True, lock=False)
 
+    @abstractmethod
+    def get_card_fragment(self, answer, card, tags) -> str:
+        pass
 
-def get_aggregate_html(css: List[str], cards: List[str], deck_name: str = ""):
-    css_str = '\n'.join(set(css))
-    cards_str = '\n'.join(cards)
+    @abstractmethod
+    def get_aggregate(self) -> str:
+        pass
 
-    return f"""<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{deck_name}</title>
-  <style>
-  {css_str}
-  </style>
-  <script>{js()}</script> 
-</head>
-<body onload="addBrackets();">
-  {cards_str} </body>
-</html>"""
+
+class HtmlExporter(Exporter):
+
+    # todo the extra info ending up in a separate block is a big problem -_-
+    # also image export does not really work - it embeds the link and not copies the image
+    def get_card_fragment(self, answer, card, note):
+        metadata = self.get_card_metadata(card, note)
+        metadata = f"<span>{' '.join(metadata)}</span>"
+        return f"""<div class="card"> {insert_metadata(answer, metadata)} </div>"""
+
+    def get_aggregate(self):
+        css_str = '\n'.join(set(self.css_fragments))
+        cards_str = '\n'.join(self.card_fragments)
+
+        return f"""<!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>{self.deck_name}</title>
+      <style>
+      {css_str}
+      </style>
+      <script>{js()}</script> 
+    </head>
+    <body onload="addBrackets();">
+      {cards_str} </body>
+    </html>"""
+
+
+class MarkdownExporter(Exporter):
+
+    def __init__(self, deck_name: str, profile_directory: str):
+        super().__init__(deck_name, profile_directory, ".md")
+
+    def get_card_fragment(self, answer: str, card: Card, note: Note) -> str:
+        metadata_str = ' '.join(self.get_card_metadata(card, note))
+        return ' - \n  ' + (seq(note.fields)
+                            .filter(lambda it: it)
+                            .map(md)
+                            .map(lambda it: it.replace('\n', '\n  '))
+                            + seq(metadata_str)
+                            ).make_string('\n  ')
+
+    def get_aggregate(self) -> str:
+        return "\n".join(self.card_fragments)
+
+
+def is_cloze(card: Card):
+    return card.model()['type'] == MODEL_CLOZE
 
 
 def get_cards(col, deck_name):
@@ -179,4 +215,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     print(args)
 
+    MarkdownExporter("Book Highlights::Algorithms to Live By", args.profile_directory).export(args.output)
     HtmlExporter("Book Highlights::Algorithms to Live By", args.profile_directory).export(args.output)
