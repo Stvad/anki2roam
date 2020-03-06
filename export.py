@@ -87,7 +87,7 @@ def get_card_date(card, base_timestamp):
 
 
 def roam_date(date):
-    return f"[[{date.format('MMMM Do, YYYY')}]]"
+    return f"[[{date.format('MMMM Do, YYYY')}]]" if date else ""
 
 
 def format_tags(tags):
@@ -179,6 +179,7 @@ class MarkdownExporter(Exporter):
     def __init__(self, deck_name: str, profile_directory: str):
         super().__init__(deck_name, profile_directory, ".md")
 
+    # todo cloze still duplicates notes. what I want instead is multiple scheduling rmetadata blocks
     def get_card_fragment(self, answer: str, card: Card, note: Note) -> str:
         metadata_str = ' '.join(self.get_card_metadata(card, note))
         return ' - \n  ' + (seq(note.fields)
@@ -215,5 +216,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     print(args)
 
-    MarkdownExporter("Book Highlights::Algorithms to Live By", args.profile_directory).export(args.output)
-    HtmlExporter("Book Highlights::Algorithms to Live By", args.profile_directory).export(args.output)
+    MarkdownExporter(args.deck_name, args.profile_directory).export(args.output)
+    HtmlExporter(args.deck_name, args.profile_directory).export(args.output)
