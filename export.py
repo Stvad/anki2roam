@@ -129,8 +129,11 @@ class Exporter(ABC):
 
     def get_card_metadata(self, card, note):
         date = roam_date(get_card_date(card, self.collection.crt))
-        metadata = [f"[[[[interval]]::{card.ivl}]]", f"[[[[factor]]::{card.factor / 1000}]]",
-                    date, format_tags(note.tags)]
+        # todo filter empty strings
+        metadata = seq(f"[[[[interval]]:{card.ivl}]]" if card.ivl else "",
+                    f"[[[[factor]]:{card.factor / 1000}]]" if card.factor else "",
+                    date, 
+                    format_tags(note.tags)).filter(lambda it: it).to_list()
         return metadata
 
     def load_collection(self):
