@@ -2,20 +2,16 @@ import argparse
 import os
 import re
 import shutil
-import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import anki
 import arrow
-from functional import seq
-from markdownify import markdownify as md
-
+from anki import template, Collection
 from anki.cards import Card, MODEL_CLOZE
 from anki.notes import Note
-
-sys.path.append("../anki/pylib")
-from anki import template, Collection
-import anki
+from functional import seq
+from markdownify import markdownify as md
 
 
 # Initial version is taken from
@@ -138,7 +134,7 @@ class Exporter(ABC):
 
     def load_collection(self):
         collection_path = os.path.join(self.profile_directory, "collection.anki2")
-        return Collection(collection_path, log=True, lock=False)
+        return Collection(collection_path, log=True)
 
     @abstractmethod
     def get_card_fragment(self, answer, card, tags) -> str:
