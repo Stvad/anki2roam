@@ -7,9 +7,10 @@ from pathlib import Path
 
 import anki
 import arrow
-from anki import template, Collection
+from anki import Collection
 from anki.cards import Card, MODEL_CLOZE
 from anki.notes import Note
+from anki.template import TemplateRenderContext
 from functional import seq
 from markdownify import markdownify as md
 
@@ -113,7 +114,7 @@ class Exporter(ABC):
             note = self.collection.getNote(card.nid)
             self.css_fragments.append(self.collection.models.get(note.mid)['css'])
 
-            rendering = template.render_card(self.collection, card, note, False)
+            rendering = TemplateRenderContext.from_existing_card(card, False).render()
 
             answer = extract_media(rendering.answer_text, output_dir, self.profile_directory)
             self.card_fragments.append(self.get_card_fragment(answer, card, note))
@@ -128,7 +129,7 @@ class Exporter(ABC):
         # todo filter empty strings
         metadata = seq(f"[[[[interval]]:{card.ivl}]]" if card.ivl else "",
                     f"[[[[factor]]:{card.factor / 1000}]]" if card.factor else "",
-                    date, 
+                    date,
                     format_tags(note.tags)).filter(lambda it: it).to_list()
         return metadata
 
@@ -213,7 +214,6 @@ if __name__ == '__main__':
     parser.add_argument('profile_directory', help='The Anki profile directory')
     parser.add_argument('-o', '--output', help='Deck Name', default=Path(__file__).parent.resolve())
     args = parser.parse_args()
-    print(args)
 
     MarkdownExporter(args.deck_name, args.profile_directory).export(args.output)
     HtmlExporter(args.deck_name, args.profile_directory).export(args.output)
