@@ -1,4 +1,10 @@
+# core
 arrow~=0.15.5
 anki~=2.1.35
 markdownify~=0.4.1
 PyFunctional
+
+# app/presentation
+voila
+ipywidgets
+jupyter_contrib_nbextensions

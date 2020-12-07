@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -101,15 +102,26 @@ def insert_metadata(answer: str, metadata):
 
 
 class Exporter(ABC):
-    def __init__(self, deck_name: str, profile_directory: str, file_suffix: str = ".html"):
+    def __init__(self, deck_name: str, profile_directory: str, file_suffix: str = ".html", collection=None):
         self.deck_name = deck_name
         self.profile_directory = profile_directory
         self.file_suffix = file_suffix
-        self.collection = self.load_collection()
+        self.collection = collection or self.load_collection()
         self.css_fragments = ["div {display: inline;}"]
         self.card_fragments = []
 
     def export(self, output_dir):
+        self.build_export_context(output_dir)
+
+        Path(output_dir).joinpath(self.deck_name).with_suffix(self.file_suffix) \
+            .write_text(self.get_aggregate())
+
+    def export_text(self):
+        self.build_export_context(tempfile.TemporaryDirectory().name)
+        return self.get_aggregate()
+
+    def build_export_context(self, output_dir):
+        print(f"Exporting {self.deck_name} deck")
         for card in get_cards(self.collection, self.deck_name):
             note = self.collection.getNote(card.nid)
             self.css_fragments.append(self.collection.models.get(note.mid)['css'])
@@ -119,18 +131,17 @@ class Exporter(ABC):
             answer = extract_media(rendering.answer_text, output_dir, self.profile_directory)
             self.card_fragments.append(self.get_card_fragment(answer, card, note))
 
-        print(f"Exporting {len(self.card_fragments)} cards")
+        self.collection.close()
 
-        Path(output_dir).joinpath(self.deck_name).with_suffix(self.file_suffix) \
-            .write_text(self.get_aggregate())
+        print(f"Exporting {len(self.card_fragments)} cards")
 
     def get_card_metadata(self, card, note):
         date = roam_date(get_card_date(card, self.collection.crt))
         # todo filter empty strings
         metadata = seq(f"[[[[interval]]:{card.ivl}]]" if card.ivl else "",
-                    f"[[[[factor]]:{card.factor / 1000}]]" if card.factor else "",
-                    date,
-                    format_tags(note.tags)).filter(lambda it: it).to_list()
+                       f"[[[[factor]]:{card.factor / 1000}]]" if card.factor else "",
+                       date,
+                       format_tags(note.tags)).filter(lambda it: it).to_list()
         return metadata
 
     def load_collection(self):
@@ -212,7 +223,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('deck_name', help='Deck Name')
     parser.add_argument('profile_directory', help='The Anki profile directory')
-    parser.add_argument('-o', '--output', help='Deck Name', default=Path(__file__).parent.resolve())
+    parser.add_argument('-o', '--output', help='Output directory', default=Path(__file__).parent.resolve())
     args = parser.parse_args()
 
     MarkdownExporter(args.deck_name, args.profile_directory).export(args.output)
