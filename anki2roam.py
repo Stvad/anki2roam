@@ -2,7 +2,6 @@ import argparse
 import os
 import re
 import shutil
-import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -15,30 +14,17 @@ from anki.template import TemplateRenderContext
 from functional import seq
 from markdownify import markdownify as md
 
-
 # Initial version is taken from
 # https://www.juliensobczak.com/write/2016/12/26/anki-scripting.html#CaseStudy:ExportingflashcardsinHTML
 
 
-def extract_media(text, output_dir, profile_dir):
-    regex = r'<img src="(.*?)"\s?/?>'
-    pattern = re.compile(regex)
+target_media_folder = 'medias'
 
-    src_media_folder = os.path.join(profile_dir, "collection.media/")
-    dest_media_folder = os.path.join(output_dir, "medias")
 
-    # Create target directory if not exists
-    if not os.path.exists(dest_media_folder):
-        os.makedirs(dest_media_folder)
-
-    for (media) in re.findall(pattern, text):
-        src = os.path.join(src_media_folder, media)
-        dest = os.path.join(dest_media_folder, media)
-        shutil.copyfile(src, dest)
-
-    text_with_prefix_folder = re.sub(regex, r'<img src="medias/\1" />', text)
-
-    return text_with_prefix_folder
+def extract_image_names(text):
+    image_regex = r'<img src="(.*?)"\s?/?>'
+    text_with_prefix_folder = re.sub(image_regex, fr'<img src="{target_media_folder}/\1" />', text)
+    return text_with_prefix_folder, re.findall(image_regex, text)
 
 
 def get_card_ids(deck_manager, did, children=False, include_from_dynamic=False):
@@ -109,18 +95,20 @@ class Exporter(ABC):
         self.collection = collection or self.load_collection()
         self.css_fragments = ["div {display: inline;}"]
         self.card_fragments = []
+        self.images = []
 
     def export(self, output_dir):
-        self.build_export_context(output_dir)
+        self.build_export_context()
 
         Path(output_dir).joinpath(self.deck_name).with_suffix(self.file_suffix) \
             .write_text(self.get_aggregate())
+        self.copy_images(output_dir)
 
     def export_text(self):
-        self.build_export_context(tempfile.TemporaryDirectory().name)
+        self.build_export_context()
         return self.get_aggregate()
 
-    def build_export_context(self, output_dir):
+    def build_export_context(self):
         print(f"Exporting {self.deck_name} deck")
         for card in get_cards(self.collection, self.deck_name):
             note = self.collection.getNote(card.nid)
@@ -128,8 +116,9 @@ class Exporter(ABC):
 
             rendering = TemplateRenderContext.from_existing_card(card, False).render()
 
-            answer = extract_media(rendering.answer_text, output_dir, self.profile_directory)
-            self.card_fragments.append(self.get_card_fragment(answer, card, note))
+            answer_text, images = extract_image_names(rendering.answer_text)
+            self.images += images
+            self.card_fragments.append(self.get_card_fragment(answer_text, card, note))
 
         self.collection.close()
 
@@ -147,6 +136,22 @@ class Exporter(ABC):
     def load_collection(self):
         collection_path = os.path.join(self.profile_directory, "collection.anki2")
         return Collection(collection_path, log=True)
+
+    def copy_images(self, output_dir):
+        src_media_folder = os.path.join(self.profile_directory, "collection.media/")
+        dest_media_folder = os.path.join(output_dir, target_media_folder)
+        if not os.path.exists(src_media_folder):
+            print("Skipping media export as source media folder does not exist")
+            return
+
+        # Create target directory if not exists
+        if not os.path.exists(dest_media_folder):
+            os.makedirs(dest_media_folder)
+
+        for media in self.images:
+            src = os.path.join(src_media_folder, media)
+            dest = os.path.join(dest_media_folder, media)
+            shutil.copyfile(src, dest)
 
     @abstractmethod
     def get_card_fragment(self, answer, card, tags) -> str:
