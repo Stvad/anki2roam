@@ -23,7 +23,7 @@ Example of the exported cards (first one Q&A card and second one is a Cloze card
 
 ### Web (recommended)
 
-Go to  [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/Stvad/anki2roam/master?urlpath=voila/render/anki2roam.ipynb)  and follow the instructions (it can a bit to load the first time)
+Go to  [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/Stvad/anki2roam/master?urlpath=voila/render/anki2roam.ipynb)  and follow the instructions (it can take a bit to load the first time)
 
 ### CLI
 #### Prerequisites
