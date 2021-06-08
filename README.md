@@ -5,6 +5,11 @@
 A tool that allows you to export your Anki deck into a Markdown or HTML page with the SRS metadata preserved
 in the format that [Roam Toolkit](https://github.com/roam-unofficial/roam-toolkit) understands.
 
+---
+The development is supported by <a href="https://roam.garden/"> <img src="https://roam.garden/static/logo-2740b191a74245dc48ee30c68d5192aa.svg" height="50" /></a> - a service that allows you to publish your Roam notes as a beautiful static website (digital garden)
+
+---
+
 Example of the exported cards (first one Q&A card and second one is a Cloze card):
 ```
  -
